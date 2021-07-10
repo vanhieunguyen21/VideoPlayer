@@ -60,7 +60,7 @@ public class VideoPlayback extends JPanel {
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        String videoPath = "tmp/tbbfcut.mp4";
+        String videoPath = "tmp/input.mp4";
         String tempAudioPath = "tmp/audio_tmp.wav";
 
         Runtime runtime = Runtime.getRuntime();
