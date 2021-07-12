@@ -1,3 +1,5 @@
+package server;
+
 import org.bytedeco.ffmpeg.global.avutil;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;
@@ -26,8 +28,8 @@ public class AudioPlayback {
     private byte[] combine;
 
     private long frameRead;
+    private double threshold;
     private double frameTimeDeltaMilli;
-    private double thresholdMilli;
     private AtomicLong frameToSkip = new AtomicLong(0);
     private AtomicLong delayTime = new AtomicLong(0);
     private long audioStartTimeNano = 0;
@@ -50,10 +52,9 @@ public class AudioPlayback {
         long totalFrames = fg.getLengthInAudioFrames();
         double totalSeconds = (double) totalFrames / fg.getAudioFrameRate();
         frameTimeDeltaMilli = (totalSeconds * 1000) / totalFrames;
+        threshold = frameTimeDeltaMilli * 3;
 
         sampleFormat = fg.getSampleFormat();
-        // Sync threshold
-        thresholdMilli = frameTimeDeltaMilli * 2;
 
         // Init sound output
         initSourceDataLine(fg);
@@ -71,8 +72,8 @@ public class AudioPlayback {
                         fg.restart();
                         continue;
                     }
-                    frameRead++;
 
+                    frameRead++;
                     // delay if delay value is bigger than 0
                     long delay = delayTime.getAndSet(0);
                     if (delay > 0) {
@@ -101,7 +102,7 @@ public class AudioPlayback {
     /**
      * Function to sync video playback and audio playback
      * This function is called by video playback
-     * */
+     */
     public void sync(long videoStartTimeNano, double videoElapsedTimeMilli) {
         // Do nothing if one of streams is not started
         if (videoStartTimeNano == 0 || audioStartTimeNano == 0) {
@@ -113,32 +114,33 @@ public class AudioPlayback {
         // Sync if starting points of two streams are not the same
         if (audioStartTimeNano < videoStartTimeNano) {
             // if audio start earlier than video, delay so that start time matches
-            double delta = videoStartTimeNano - audioStartTimeNano;
-            long frameDiff = (long) (delta / frameTimeDeltaMilli) / 1000000;
+            double deltaNano = videoStartTimeNano - audioStartTimeNano;
+            long frameDiff = (long) ((deltaNano / 1000000) / frameTimeDeltaMilli);
             delayTime.set((long) (frameDiff * frameTimeDeltaMilli));
             audioStartTimeNano = videoStartTimeNano;
             return;
         } else if (audioStartTimeNano > videoStartTimeNano) {
             // if video start earlier than audio, skip frame so that start time matches
-            double delta = audioStartTimeNano - videoStartTimeNano;
-            long frameDiff = (long) (delta / frameTimeDeltaMilli) / 1000000;
+            double deltaNano = audioStartTimeNano - videoStartTimeNano;
+            long frameDiff = (long) ((deltaNano / 1000000) / frameTimeDeltaMilli);
             frameToSkip.set(frameDiff);
             audioStartTimeNano = videoStartTimeNano;
             return;
         }
 
+//        if (delayTime.get() > 0) return;
         // Calculate time difference between streams
         double audioElapsedTimeMilli = getElapsedTimeMilli();
         double deltaMilli = audioElapsedTimeMilli - videoElapsedTimeMilli;
         // Calculate number of audio frames difference from current video time position
         long frameDiff = (long) (Math.abs(deltaMilli) / frameTimeDeltaMilli);
-        if (deltaMilli < -thresholdMilli) {
+        if (deltaMilli < -threshold) {
             // video is faster than audio
-            // if difference is bigger than threshold, skip some frames
+            // skip some frames
             frameToSkip.set(frameDiff);
-        } else if (deltaMilli > thresholdMilli) {
+        } else if (deltaMilli > 0) {
             // audio is faster than video
-            // if difference is bigger than threshold, delay the audio
+            // delay the audio
             delayTime.set((long) (frameDiff * frameTimeDeltaMilli));
         }
     }
@@ -202,12 +204,32 @@ public class AudioPlayback {
         }
     }
 
-    private void writeToSourceDataLine(byte[] data, int offset, int length){
+    private void writeToSourceDataLine(byte[] data, int offset, int length) {
         sourceDataLine.write(data, offset, length);
     }
 
-    private double getElapsedTimeMilli() {
+    public double getElapsedTimeMilli() {
         return frameRead * frameTimeDeltaMilli;
+    }
+
+    public long getAudioStartTimeNano() {
+        return audioStartTimeNano;
+    }
+
+    public void setDelayTime(long milli){
+        delayTime.set(milli);
+    }
+
+    public void setAudioStartTimeNano(long audioStartTimeNano) {
+        this.audioStartTimeNano = audioStartTimeNano;
+    }
+
+    public double getFrameTimeDeltaMilli() {
+        return frameTimeDeltaMilli;
+    }
+
+    public void setFrameToSkip(long numberOfFrame){
+        frameToSkip.set(numberOfFrame);
     }
 
     private void initSourceDataLine(FFmpegFrameGrabber fg) {
